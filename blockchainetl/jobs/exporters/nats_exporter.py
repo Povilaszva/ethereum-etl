@@ -1,13 +1,11 @@
+import asyncio
 import collections
 import json
 import logging
 import os
-import asyncio
 import nats
-import concurrent.futures
 
 from blockchainetl.jobs.exporters.converters.composite_item_converter import CompositeItemConverter
-
 
 class NatsItemExporter:
 
@@ -17,15 +15,12 @@ class NatsItemExporter:
         self.connection_url = self.get_connection_url(output)
         self.credentials_path = os.getenv("NATS_CREDENTIALS")
         self.topic_prefix = os.getenv("NATS_SUBJECT_PREFIX")
+
         if not self.credentials_path:
             raise ValueError("NATS_CREDENTIALS environment variable not set!")
-        self.nc = nats.aio.client.Client()
-        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-        self.open()
 
-    def __del__(self):
-        self.close()
-        self.executor.shutdown()
+        self.nc = nats.NATS()
+        self.loop = asyncio.get_event_loop()
 
     def get_connection_url(self, output):
         try:
@@ -34,8 +29,8 @@ class NatsItemExporter:
             raise Exception('Invalid nats output param, It should be in format of "nats://127.0.0.1:4222"')
 
     def open(self):
-        loop = asyncio.get_event_loop()
-        loop.run_in_executor(self.executor, self._async_open)
+        if not self.nc.is_connected:
+            self.loop.run_until_complete(self._async_open())
 
     async def _async_open(self):
         await self.nc.connect(self.connection_url, user_credentials=self.credentials_path)
@@ -49,26 +44,25 @@ class NatsItemExporter:
         if item_type is not None and item_type in self.item_type_to_subject_mapping:
             data = json.dumps(item).encode('utf-8')
             logging.debug(data)
-            topic = self.topic_prefix + self.item_type_to_subject_mapping[item_type]
-            loop = asyncio.get_event_loop()
-            loop.run_in_executor(self.executor, self._async_publish, topic, data)
+            self.loop.run_until_complete(
+                self._async_publish(self.topic_prefix + self.item_type_to_subject_mapping[item_type], data))
         else:
             logging.warning('Subject for item type "{}" is not configured.'.format(item_type))
 
-    async def _async_publish(self, topic, data):
-        await self.nc.publish(topic, data)
+    async def _async_publish(self, subject, data):
+        await self.nc.publish(subject, data)
 
     def convert_items(self, items):
         for item in items:
             yield self.converter.convert_item(item)
 
     def close(self):
-        loop = asyncio.get_event_loop()
-        loop.run_in_executor(self.executor, self._async_close)
+        if self.nc.is_connected:
+            self.loop.run_until_complete(self.nc.close())
 
-    async def _async_close(self):
-        await self.nc.close()
-
+    def __del__(self):
+        """Destructor to cleanup resources."""
+        self.close()
 
 def group_by_item_type(items):
     result = collections.defaultdict(list)
