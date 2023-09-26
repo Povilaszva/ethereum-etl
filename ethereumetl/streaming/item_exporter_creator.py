@@ -93,7 +93,20 @@ def create_item_exporter(output):
             'contract': 'contracts',
             'token': 'tokens',
         })
-
+    elif item_exporter_type == ItemExporterType.NATS:
+        from blockchainetl.jobs.exporters.nats_exporter import NatsItemExporter
+        item_exporter = NatsItemExporter(
+            output,
+            item_type_to_subject_mapping={
+                'block': 'blocks',
+                'transaction': 'transactions',
+                'log': 'logs',
+                'token_transfer': 'token_transfers',
+                'trace': 'traces',
+                'contract': 'contracts',
+                'token': 'tokens',
+            }
+        )
     else:
         raise ValueError('Unable to determine item exporter type for output ' + output)
 
@@ -118,6 +131,8 @@ def determine_item_exporter_type(output):
         return ItemExporterType.KINESIS
     if output is not None and output.startswith('kafka'):
         return ItemExporterType.KAFKA
+    if output is not None and output.startswith('nats'):
+        return ItemExporterType.NATS
     elif output is not None and output.startswith('postgresql'):
         return ItemExporterType.POSTGRES
     elif output is not None and output.startswith('gs://'):
@@ -135,4 +150,5 @@ class ItemExporterType:
     GCS = 'gcs'
     CONSOLE = 'console'
     KAFKA = 'kafka'
+    NATS = 'nats'
     UNKNOWN = 'unknown'
